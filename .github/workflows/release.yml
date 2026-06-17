@@ -1,0 +1,77 @@
+name: Publish release package
+
+on:
+  push:
+    tags:
+      - 'v*'
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Existing release tag to attach the package to, for example v1.0.0'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: Package Pager Tracker
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set release tag
+        shell: pwsh
+        run: |
+          $tagName = '${{ github.ref_name }}'
+
+          if ('${{ github.event_name }}' -eq 'release') {
+            $tagName = '${{ github.event.release.tag_name }}'
+          }
+
+          if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
+            $tagName = '${{ inputs.tag_name }}'
+          }
+
+          if ([string]::IsNullOrWhiteSpace($tagName)) {
+            throw 'No release tag was provided.'
+          }
+
+          "RELEASE_TAG=$tagName" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Create release package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $packageRoot = Join-Path $env:RUNNER_TEMP 'PagerTracker'
+          $packagePath = Join-Path $env:RUNNER_TEMP 'PagerTracker-Windows-x64.zip'
+
+          New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
+          Copy-Item -LiteralPath 'publish' -Destination (Join-Path $packageRoot 'publish') -Recurse -Force
+          Copy-Item -LiteralPath 'Build-PagerTracker.ps1' -Destination $packageRoot -Force
+          Copy-Item -LiteralPath 'Install-PagerTracker.ps1' -Destination $packageRoot -Force
+          Copy-Item -LiteralPath 'README.txt' -Destination $packageRoot -Force
+          Copy-Item -LiteralPath 'LICENSE' -Destination $packageRoot -Force
+
+          Compress-Archive -Path (Join-Path $packageRoot '*') -DestinationPath $packagePath -Force
+          "PACKAGE_PATH=$packagePath" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Upload release package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PagerTracker-Windows-x64
+          path: ${{ env.PACKAGE_PATH }}
+
+      - name: Attach package to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          files: ${{ env.PACKAGE_PATH }}
+          fail_on_unmatched_files: true
